@@ -4,8 +4,8 @@
   "description": "Production-ready Node.js + Express backend setup for a MERN project.",
   "main": "server.js",
   "scripts": {
-    "start": "NODE_ENV=production node server.js",
-    "dev": "NODE_ENV=development nodemon server.js"
+    "start": "cross-env NODE_ENV=production node server.js",
+    "dev": "npx kill-port 5000 && cross-env NODE_ENV=development nodemon server.js"
   },
   "keywords": [
     "express",
@@ -28,6 +28,7 @@
     "uuid": "^9.0.0"
   },
   "devDependencies": {
+    "cross-env": "^10.1.0",
     "nodemon": "^3.0.3"
   }
 }

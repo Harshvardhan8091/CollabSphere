@@ -15,7 +15,7 @@ export const connectSocket = () => {
     if (socket && socket.connected) return socket
 
     socket = io(BACKEND_URL, {
-        transports: ['websocket'],
+        transports: ['websocket', 'polling'],
         withCredentials: true,
     })
 

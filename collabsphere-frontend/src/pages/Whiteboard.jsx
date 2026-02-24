@@ -15,6 +15,7 @@ const ROOM_ID = 'test-room-123'
 
 function Whiteboard() {
     const canvasRef = useRef(null)
+    const imageInputRef = useRef(null)
     const [isDrawing, setIsDrawing] = useState(false)
     const [color, setColor] = useState('#000000')
     const [brushSize, setBrushSize] = useState(3)
@@ -27,6 +28,7 @@ function Whiteboard() {
     // ── Presence state ────────────────────────────────────────────────────────
     const [onlineUsers, setOnlineUsers] = useState([])
     const [myRole, setMyRole] = useState(null)  // 'host' | 'editor' | 'viewer'
+    const [selectedImageId, setSelectedImageId] = useState(null)
 
     // Current stroke points collected during a single mouse-drag
     const currentStroke = useRef([])
@@ -34,6 +36,14 @@ function Whiteboard() {
     const isDrawingRef = useRef(false)
     // Previous mouse position — used to emit draw-segment intervals
     const prevPos = useRef(null)
+
+    // ── Image drag refs ───────────────────────────────────────────────────────
+    const imagesRef = useRef([])          // live image objects for hit-testing
+    const canvasItemsRef = useRef([])     // all canvas items (strokes + images)
+    const draggingImageRef = useRef(null) // { id, offsetX, offsetY } while dragging
+    const resizingImageRef = useRef(null) // { id, startMouseX, startMouseY, startW, startH }
+    const selectedImageIdRef = useRef(null) // mirrors selectedImageId state for use in redrawAll
+    const lastEmitRef = useRef(0)         // throttle update-image / resize-image (ms)
 
     // Auto-scroll chat to bottom whenever messages change
     useEffect(() => {
@@ -63,14 +73,12 @@ function Whiteboard() {
 
         socket.emit('join-room', { roomId: ROOM_ID, userId: MY_USER_ID })
 
-        // Shared helper: clear canvas and redraw all strokes in order
-        const replayCanvas = (strokes) => {
-            const canvas = canvasRef.current
-            if (!canvas) return
-            const ctx = canvas.getContext('2d')
-            ctx.clearRect(0, 0, canvas.width, canvas.height)
-            strokes.forEach(stroke => renderStroke(stroke))
-            console.log(`[Canvas] Replayed ${strokes.length} stroke(s)`)
+        // Replay helper — updates refs and redraws everything
+        const replayCanvas = (items) => {
+            canvasItemsRef.current = items
+            imagesRef.current = items.filter(i => i.type === 'image')
+            redrawAll()
+            console.log(`[Canvas] Replayed ${items.length} item(s)`)
         }
 
         // Load persisted canvas on join — fires only for THIS socket
@@ -127,6 +135,33 @@ function Whiteboard() {
             console.log('[Socket] Role assigned:', role)
         })
 
+        // Image added — push to refs and draw
+        socket.on('image-added', (imgObj) => {
+            if (!imgObj?.src) return
+            canvasItemsRef.current = [...canvasItemsRef.current, imgObj]
+            imagesRef.current = [...imagesRef.current, imgObj]
+            drawImageOnCanvas(imgObj)
+            console.log('[Canvas] image-added drawn:', imgObj.userId)
+        })
+
+        // Image moved by another user — update refs and redraw
+        socket.on('image-updated', ({ imageId, newX, newY }) => {
+            const update = (arr) => arr.forEach(i => { if (i.id === imageId) { i.x = newX; i.y = newY } })
+            update(canvasItemsRef.current)
+            update(imagesRef.current)
+            redrawAll()
+        })
+
+        // Image resized by another user — update refs and redraw
+        socket.on('image-resized', ({ imageId, newWidth, newHeight }) => {
+            const update = (arr) => arr.forEach(i => {
+                if (i.id === imageId) { i.width = newWidth; i.height = newHeight }
+            })
+            update(canvasItemsRef.current)
+            update(imagesRef.current)
+            redrawAll()
+        })
+
         return () => {
             socket.off('load-canvas')
             socket.off('canvas-updated')
@@ -135,6 +170,9 @@ function Whiteboard() {
             socket.off('receive-message')
             socket.off('online-users')
             socket.off('role-assigned')
+            socket.off('image-added')
+            socket.off('image-updated')
+            socket.off('image-resized')
             disconnectSocket()
         }
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -160,6 +198,54 @@ function Whiteboard() {
         ctx.closePath()
     }
 
+    // ── Draw a single image object onto canvas ────────────────────────────────
+    const drawImageOnCanvas = (imgObj) => {
+        const canvas = canvasRef.current
+        if (!canvas || !imgObj?.src) return
+        const img = new Image()
+        img.onload = () => {
+            canvas.getContext('2d').drawImage(img, imgObj.x, imgObj.y, imgObj.width, imgObj.height)
+        }
+        img.src = imgObj.src
+    }
+
+    // ── Redraw entire canvas from canvasItemsRef ──────────────────────────────
+    const HANDLE = 10   // resize handle size in px
+
+    const redrawAll = () => {
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const ctx = canvas.getContext('2d')
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        canvasItemsRef.current.forEach(item => {
+            if (item.type === 'image') drawImageOnCanvas(item)
+            else renderStroke(item)
+        })
+        // Draw selection handle for selected image after all items rendered
+        if (selectedImageIdRef.current) {
+            const sel = imagesRef.current.find(i => i.id === selectedImageIdRef.current)
+            if (sel) drawSelectionHandle(sel)
+        }
+    }
+
+    // ── Draw resize handle on selected image ──────────────────────────────
+    const drawSelectionHandle = (img) => {
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const ctx = canvas.getContext('2d')
+        // Dashed border
+        ctx.save()
+        ctx.strokeStyle = '#4f6ef7'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([5, 3])
+        ctx.strokeRect(img.x, img.y, img.width, img.height)
+        // Solid resize square at bottom-right
+        ctx.setLineDash([])
+        ctx.fillStyle = '#4f6ef7'
+        ctx.fillRect(img.x + img.width - HANDLE, img.y + img.height - HANDLE, HANDLE * 2, HANDLE * 2)
+        ctx.restore()
+    }
+
     // ── Position helper ───────────────────────────────────────────────────────
     const getPos = (e) => {
         const rect = canvasRef.current.getBoundingClientRect()
@@ -170,6 +256,20 @@ function Whiteboard() {
     // ── Mouse handlers ────────────────────────────────────────────────────────
     const onMouseDown = (e) => {
         const pos = getPos(e)
+
+        // Check if clicking inside any image (iterate in reverse = topmost first)
+        const hit = [...imagesRef.current].reverse().find(
+            img => pos.x >= img.x && pos.x <= img.x + img.width &&
+                pos.y >= img.y && pos.y <= img.y + img.height
+        )
+        if (hit) {
+            setSelectedImageId(hit.id)
+            draggingImageRef.current = { id: hit.id, offsetX: pos.x - hit.x, offsetY: pos.y - hit.y }
+            return // Don't start drawing
+        }
+
+        // Normal draw start
+        setSelectedImageId(null)
         currentStroke.current = [pos]
         prevPos.current = pos
         isDrawingRef.current = true
@@ -181,11 +281,36 @@ function Whiteboard() {
     }
 
     const onMouseMove = (e) => {
-        if (!isDrawingRef.current) return
         const pos = getPos(e)
+
+        // ── Image drag mode ──────────────────────────────────────────────────
+        if (draggingImageRef.current) {
+            const { id, offsetX, offsetY } = draggingImageRef.current
+            const newX = pos.x - offsetX
+            const newY = pos.y - offsetY
+
+                // Update both ref arrays in-place
+                ;[canvasItemsRef.current, imagesRef.current].forEach(arr =>
+                    arr.forEach(i => { if (i.id === id) { i.x = newX; i.y = newY } })
+                )
+            redrawAll()
+
+            // Throttled emit ~30 fps
+            const now = Date.now()
+            if (now - lastEmitRef.current > 33) {
+                lastEmitRef.current = now
+                const socket = getSocket()
+                if (socket?.connected) {
+                    socket.emit('update-image', { roomId: ROOM_ID, imageId: id, newX, newY })
+                }
+            }
+            return
+        }
+
+        // ── Normal drawing mode ───────────────────────────────────────────────
+        if (!isDrawingRef.current) return
         currentStroke.current.push(pos)
 
-        // Draw locally in real-time
         const ctx = canvasRef.current.getContext('2d')
         ctx.lineTo(pos.x, pos.y)
         ctx.strokeStyle = color
@@ -194,7 +319,6 @@ function Whiteboard() {
         ctx.lineJoin = 'round'
         ctx.stroke()
 
-        // Emit segment to other users immediately
         const prev = prevPos.current
         if (prev) {
             const socket = getSocket()
@@ -209,6 +333,17 @@ function Whiteboard() {
     }
 
     const onMouseUp = () => {
+        // Release resize
+        if (resizingImageRef.current) {
+            resizingImageRef.current = null
+            return
+        }
+        // Release drag
+        if (draggingImageRef.current) {
+            draggingImageRef.current = null
+            return
+        }
+
         if (!isDrawingRef.current) return
         isDrawingRef.current = false
         setIsDrawing(false)
@@ -249,6 +384,24 @@ function Whiteboard() {
         if (!socket?.connected) return
         socket.emit('redo-stroke', { roomId: ROOM_ID, userId: MY_USER_ID })
         console.log('[Canvas] Emitted redo-stroke for userId:', MY_USER_ID)
+    }
+
+    // ── Image upload ──────────────────────────────────────────────────────────
+    const handleImageUpload = (e) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        // Reset so the same file can be re-selected if needed
+        e.target.value = ''
+        const reader = new FileReader()
+        reader.onload = () => {
+            const imageData = reader.result // base64 data URL
+            const socket = getSocket()
+            if (socket?.connected) {
+                socket.emit('upload-image', { roomId: ROOM_ID, userId: MY_USER_ID, imageData })
+                console.log('[Canvas] upload-image emitted')
+            }
+        }
+        reader.readAsDataURL(file)
     }
 
     // ── Chat ──────────────────────────────────────────────────────────────────
@@ -301,6 +454,22 @@ function Whiteboard() {
                 </button>
                 <button onClick={handleUndo} style={{ ...btnStyle, background: '#555' }}>↩ Undo</button>
                 <button onClick={handleRedo} style={{ ...btnStyle, background: '#2a7' }}>↪ Redo</button>
+
+                {/* Image upload */}
+                <button
+                    onClick={() => imageInputRef.current?.click()}
+                    style={{ ...btnStyle, background: '#7c3aed' }}
+                    title="Upload image to whiteboard"
+                >
+                    🖼 Image
+                </button>
+                <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={handleImageUpload}
+                />
 
                 {/* Role badge */}
                 <span style={roleBadgeStyle(myRole)}>
@@ -443,6 +612,18 @@ const chatSendBtnStyle = {
     background: '#4f6ef7', color: '#fff', cursor: 'pointer',
     fontSize: '0.82rem', fontFamily: 'inherit', fontWeight: 600,
 }
+
+// ── Role badge style ──────────────────────────────────────────────────────────
+const roleBadgeStyle = (role) => ({
+    padding: '0.25rem 0.75rem',
+    borderRadius: '999px',
+    fontSize: '0.75rem',
+    fontWeight: 600,
+    letterSpacing: '0.04em',
+    background: role === 'host' ? '#c0392b' : role === 'editor' ? '#2980b9' : '#555',
+    color: '#fff',
+    userSelect: 'none',
+})
 
 // ── Presence panel styles ─────────────────────────────────────────────────────
 const presencePanelStyle = {

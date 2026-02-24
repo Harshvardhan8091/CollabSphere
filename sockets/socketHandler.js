@@ -1,5 +1,6 @@
 "use strict";
 
+const { v4: uuidv4 } = require("uuid");
 const { Room } = require("../models");
 
 /**
@@ -303,6 +304,82 @@ const registerSocketHandlers = (io) => {
         });
       } catch (err) {
         console.error(`[Socket] send-message DB error | roomId=${roomId} |`, err.message);
+      }
+    });
+
+    socket.on("upload-image", async ({ roomId, userId, imageData } = {}) => {
+      if (!roomId || !userId || !imageData) return;
+
+      try {
+        const room = await Room.findOne({ roomId });
+        if (!room) {
+          console.warn(`[Socket] upload-image: room not found | roomId=${roomId}`);
+          return;
+        }
+
+        const imageObject = {
+          id: uuidv4(),
+          type: "image",
+          src: imageData,
+          x: 100,
+          y: 100,
+          width: 300,
+          height: 200,
+          userId,
+        };
+
+        room.canvasData.push(imageObject);
+        await room.save();
+        console.log(`[Socket] upload-image saved | roomId=${roomId} | userId=${userId}`);
+
+        // Broadcast to everyone in the room (including sender)
+        io.to(roomId).emit("image-added", imageObject);
+      } catch (err) {
+        console.error(`[Socket] upload-image DB error | roomId=${roomId} |`, err.message);
+      }
+    });
+
+    socket.on("update-image", async ({ roomId, imageId, newX, newY } = {}) => {
+      if (!roomId || !imageId || newX == null || newY == null) return;
+
+      try {
+        const room = await Room.findOne({ roomId });
+        if (!room) return;
+
+        // Update position in persisted canvasData
+        const imgEntry = room.canvasData.find(item => item.id === imageId);
+        if (imgEntry) {
+          imgEntry.x = newX;
+          imgEntry.y = newY;
+          await room.save();
+        }
+
+        // Broadcast to everyone EXCEPT the mover (they already updated locally)
+        socket.to(roomId).emit("image-updated", { imageId, newX, newY });
+      } catch (err) {
+        console.error(`[Socket] update-image DB error | roomId=${roomId} |`, err.message);
+      }
+    });
+
+    socket.on("resize-image", async ({ roomId, imageId, newWidth, newHeight } = {}) => {
+      if (!roomId || !imageId || newWidth == null || newHeight == null) return;
+
+      try {
+        const room = await Room.findOne({ roomId });
+        if (!room) return;
+
+        const imgEntry = room.canvasData.find(item => item.id === imageId);
+        if (imgEntry) {
+          imgEntry.width = newWidth;
+          imgEntry.height = newHeight;
+          await room.save();
+        }
+
+        // Broadcast to everyone except the resizer (already updated locally)
+        socket.to(roomId).emit("image-resized", { imageId, newWidth, newHeight });
+        console.log(`[Socket] resize-image | roomId=${roomId} | id=${imageId} | ${newWidth}x${newHeight}`);
+      } catch (err) {
+        console.error(`[Socket] resize-image DB error | roomId=${roomId} |`, err.message);
       }
     });
 

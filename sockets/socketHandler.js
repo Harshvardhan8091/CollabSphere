@@ -177,6 +177,9 @@ const registerSocketHandlers = (io) => {
       strokes.push(stroke);
       if (strokes.length > MAX_STROKES_PER_ROOM) strokes.shift();
 
+      // Broadcast completed stroke to other users in the room
+      socket.to(roomId).emit("draw-stroke", stroke);
+
       // Async DB persist — tagged with userId for personal undo
       (async () => {
         try {
@@ -339,47 +342,63 @@ const registerSocketHandlers = (io) => {
       }
     });
 
-    socket.on("update-image", async ({ roomId, imageId, newX, newY } = {}) => {
+    socket.on("update-image", ({ roomId, imageId, newX, newY } = {}) => {
+      if (!roomId || !imageId || newX == null || newY == null) return;
+
+      // Broadcast immediately without DB save for smooth real-time updates
+      socket.to(roomId).emit("image-updated", { imageId, newX, newY });
+    });
+
+    socket.on("finalize-image-position", async ({ roomId, imageId, newX, newY } = {}) => {
       if (!roomId || !imageId || newX == null || newY == null) return;
 
       try {
         const room = await Room.findOne({ roomId });
-        if (!room) return;
+        if (!room) {
+          console.warn(`[Socket] finalize-image-position: room not found | roomId=${roomId}`);
+          return;
+        }
 
-        // Update position in persisted canvasData
+        // Save final position to MongoDB
         const imgEntry = room.canvasData.find(item => item.id === imageId);
         if (imgEntry) {
           imgEntry.x = newX;
           imgEntry.y = newY;
           await room.save();
+          console.log(`[Socket] Image position finalized | roomId=${roomId} | id=${imageId} | x=${newX} y=${newY}`);
         }
-
-        // Broadcast to everyone EXCEPT the mover (they already updated locally)
-        socket.to(roomId).emit("image-updated", { imageId, newX, newY });
       } catch (err) {
-        console.error(`[Socket] update-image DB error | roomId=${roomId} |`, err.message);
+        console.error(`[Socket] finalize-image-position DB error | roomId=${roomId} |`, err.message);
       }
     });
 
-    socket.on("resize-image", async ({ roomId, imageId, newWidth, newHeight } = {}) => {
+    socket.on("resize-image", ({ roomId, imageId, newWidth, newHeight } = {}) => {
+      if (!roomId || !imageId || newWidth == null || newHeight == null) return;
+
+      // Broadcast immediately without DB save for smooth real-time updates
+      socket.to(roomId).emit("image-resized", { imageId, newWidth, newHeight });
+    });
+
+    socket.on("finalize-image-size", async ({ roomId, imageId, newWidth, newHeight } = {}) => {
       if (!roomId || !imageId || newWidth == null || newHeight == null) return;
 
       try {
         const room = await Room.findOne({ roomId });
-        if (!room) return;
+        if (!room) {
+          console.warn(`[Socket] finalize-image-size: room not found | roomId=${roomId}`);
+          return;
+        }
 
+        // Save final size to MongoDB
         const imgEntry = room.canvasData.find(item => item.id === imageId);
         if (imgEntry) {
           imgEntry.width = newWidth;
           imgEntry.height = newHeight;
           await room.save();
+          console.log(`[Socket] Image size finalized | roomId=${roomId} | id=${imageId} | ${newWidth}x${newHeight}`);
         }
-
-        // Broadcast to everyone except the resizer (already updated locally)
-        socket.to(roomId).emit("image-resized", { imageId, newWidth, newHeight });
-        console.log(`[Socket] resize-image | roomId=${roomId} | id=${imageId} | ${newWidth}x${newHeight}`);
       } catch (err) {
-        console.error(`[Socket] resize-image DB error | roomId=${roomId} |`, err.message);
+        console.error(`[Socket] finalize-image-size DB error | roomId=${roomId} |`, err.message);
       }
     });
 

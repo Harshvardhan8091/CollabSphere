@@ -1,3 +1,29 @@
+/* Import Inter font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* CSS Variables for theming */
+:root {
+  --bg-color: #f8fafc;
+  --text-color: #0f172a;
+  --panel-color: #ffffff;
+  --accent-color: #6366f1;
+  --border-color: rgba(15, 23, 42, 0.1);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+body.dark {
+  --bg-color: #0f172a;
+  --text-color: #f1f5f9;
+  --panel-color: #1e293b;
+  --accent-color: #8b5cf6;
+  --border-color: rgba(241, 245, 249, 0.1);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+}
+
 /* Global reset & base layout */
 *, *::before, *::after {
   box-sizing: border-box;
@@ -6,10 +32,11 @@
 }
 
 body {
-  font-family: system-ui, -apple-system, sans-serif;
-  background: #0f0f0f;
-  color: #f0f0f0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-color);
   min-height: 100vh;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 /* App wrapper */

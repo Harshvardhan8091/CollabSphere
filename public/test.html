@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Socket.io Debug Test</title>
+  <style>
+    body {
+      font-family: monospace;
+      background: #111;
+      color: #0f0;
+      padding: 2rem;
+    }
+
+    h1 {
+      color: #fff;
+    }
+
+    #info {
+      margin-top: 0.5rem;
+      padding: 0.75rem 1rem;
+      background: #1a1a1a;
+      border-left: 4px solid #888;
+      color: #ccc;
+    }
+
+    #status {
+      margin-top: 1rem;
+      padding: 1rem;
+      background: #1a1a1a;
+      border-left: 4px solid #888;
+      font-size: 1rem;
+    }
+
+    #log {
+      margin-top: 1rem;
+      padding: 1rem;
+      background: #1a1a1a;
+      border-left: 4px solid #ff0;
+      max-height: 350px;
+      overflow-y: auto;
+    }
+
+    .log-entry {
+      margin: 0.25rem 0;
+    }
+
+    .error {
+      color: #f55;
+    }
+
+    .success {
+      color: #0f0;
+    }
+
+    .info {
+      color: #8cf;
+    }
+
+    .warn {
+      color: #fa0;
+    }
+
+    button {
+      margin-top: 1rem;
+      margin-right: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: #222;
+      color: #fff;
+      border: 1px solid #555;
+      cursor: pointer;
+      font-family: monospace;
+    }
+
+    button:hover {
+      background: #333;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>🔌 Socket.io Debug Page</h1>
+
+  <!-- Shows this window's unique identity -->
+  <div id="info">Initialising...</div>
+  <div id="status">Connecting to Socket.io...</div>
+  <div id="log"><strong>Event Log:</strong></div>
+
+  <button onclick="emitJoinRoom()">📤 Emit join-room</button>
+  <button onclick="emitDrawStroke()">🖊️ Emit draw-stroke</button>
+
+  <!-- Served locally by Express — no CDN required -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const statusEl = document.getElementById("status");
+    const infoEl = document.getElementById("info");
+    const logEl = document.getElementById("log");
+
+    // Give each browser window a unique userId so the server can distinguish them
+    const MY_USER_ID = "user-" + Math.random().toString(36).slice(2, 8);
+    const ROOM_ID = "test-room-123";
+
+    infoEl.textContent = `This window → userId: ${MY_USER_ID} | roomId: ${ROOM_ID}`;
+
+    function addLog(msg, type = "info") {
+      const div = document.createElement("div");
+      div.className = `log-entry ${type}`;
+      div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log(`[${type.toUpperCase()}] ${msg}`);
+    }
+
+    // ── Connect to same origin — no hardcoded localhost ──
+    let socket;
+    try {
+      socket = io({ transports: ["websocket", "polling"] });
+
+      // ── Connection lifecycle ──────────────────────────────────────────────
+      socket.on("connect", () => {
+        statusEl.textContent = `✅ Connected — Socket ID: ${socket.id}`;
+        statusEl.style.borderColor = "#0f0";
+        addLog(`Connected. Socket ID: ${socket.id}`, "success");
+      });
+
+      socket.on("connect_error", (err) => {
+        statusEl.textContent = `❌ Connection Error: ${err.message}`;
+        statusEl.style.borderColor = "#f55";
+        addLog(`Connection error: ${err.message}`, "error");
+        console.error("connect_error:", err);
+      });
+
+      socket.on("disconnect", (reason) => {
+        statusEl.textContent = `⚠️ Disconnected: ${reason}`;
+        statusEl.style.borderColor = "#ff0";
+        addLog(`Disconnected: ${reason}`, "warn");
+      });
+
+      // ── join-room response events ─────────────────────────────────────────
+
+      // ✅ Server acks back only to THIS socket after it successfully joins
+      socket.on("joined-room", (data) => {
+        addLog(`✅ joined-room confirmed: ${JSON.stringify(data)}`, "success");
+      });
+
+      // ✅ Server emits this to OTHERS when a new user joins — not back to sender
+      socket.on("user-joined", (data) => {
+        addLog(`👤 user-joined received: ${JSON.stringify(data)}`, "success");
+      });
+
+      // ✅ Server emits updated count to everyone in the room incl. sender
+      socket.on("room-users-count", (data) => {
+        addLog(`👥 room-users-count: ${JSON.stringify(data)}`, "info");
+      });
+
+      // ✅ Validation error from server (bad payload)
+      socket.on("join-room-error", (data) => {
+        addLog(`❌ join-room-error: ${data.message}`, "error");
+      });
+
+      // ── draw-stroke ───────────────────────────────────────────────────────
+      socket.on("draw-stroke", (data) => {
+        addLog(`🖊️ draw-stroke received: ${JSON.stringify(data)}`, "info");
+      });
+
+    } catch (err) {
+      statusEl.textContent = `❌ Fatal: ${err.message}`;
+      statusEl.style.borderColor = "#f55";
+      console.error("Socket init failed:", err);
+    }
+
+    // ── Button actions ────────────────────────────────────────────────────────
+    function emitJoinRoom() {
+      if (!socket || !socket.connected) {
+        addLog("Cannot emit — socket not connected.", "error");
+        return;
+      }
+      const payload = { roomId: ROOM_ID, userId: MY_USER_ID };
+      socket.emit("join-room", payload);
+      addLog(`Emitted join-room: ${JSON.stringify(payload)}`, "success");
+    }
+
+    function emitDrawStroke() {
+      if (!socket || !socket.connected) {
+        addLog("Cannot emit — socket not connected.", "error");
+        return;
+      }
+      const payload = { stroke: { x: 100, y: 200, color: "#ff0000", size: 5 }, roomId: ROOM_ID };
+      socket.emit("draw-stroke", payload);
+      addLog(`Emitted draw-stroke: ${JSON.stringify(payload)}`, "success");
+    }
+  </script>
+</body>
+
+</html>

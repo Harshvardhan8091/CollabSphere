@@ -10,24 +10,34 @@ const roomSchema = new mongoose.Schema(
       unique: true
     },
     host: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true
+      type: String,
+      default: null
     },
     participants: [
       {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User"
+        userId: { type: String, required: true },
+        role: {
+          type: String,
+          enum: ["host", "editor", "viewer"],
+          default: "editor"
+        }
       }
     ],
     canvasData: {
       type: Array,
       default: []
     },
-    chatMessages: {
-      type: Array,
+    redoStack: {
+      type: [Object],
       default: []
     },
+    chatMessages: [
+      {
+        userId: { type: String, required: true },
+        message: { type: String, required: true },
+        timestamp: { type: Date, default: Date.now }
+      }
+    ],
     createdAt: {
       type: Date,
       default: Date.now
